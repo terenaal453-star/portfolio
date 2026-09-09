@@ -1,7 +1,6 @@
 import React, { useRef, useCallback, useEffect, useState } from "react";
-import { CardFront } from "./CardFront";
-import { CardBack } from "./CardBack";
-import { Lanyard } from "./Lanyard";
+import { RealisticCard }  from "./RealisticCard";
+import { LanyardSystem }  from "./LanyardSystem";
 import { useCardPhysics, CardPhysicsState } from "../../hooks/useCardPhysics";
 import { useMousePosition } from "../../hooks/useMousePosition";
 
@@ -9,237 +8,209 @@ export interface IDCard3DProps {
   commandRef?: React.MutableRefObject<((cmd: string) => void) | null>;
 }
 
-const CARD_WIDTH = 224;
-const CARD_HEIGHT = 344;
-const LANYARD_HEIGHT = 140;
+const CARD_W      = 218;
+const CARD_H      = 336;
+const LANYARD_H   = 165;
 
 export const IDCard3D: React.FC<IDCard3DProps> = ({ commandRef }) => {
   const containerRef = useRef<HTMLDivElement>(null);
-  const cardWrapRef = useRef<HTMLDivElement>(null);
-  const lightOverlayRef = useRef<HTMLDivElement>(null);
-  const lanyardRef = useRef<HTMLDivElement>(null);
+  const cardRef      = useRef<HTMLDivElement>(null);
+  const shadowRef    = useRef<HTMLDivElement>(null);
 
-  const physicsStateRef = useRef<CardPhysicsState>({
-    rotX: 0,
-    rotY: 0,
-    rotZ: -8,
-    posX: 0,
-    posY: 0,
+  const stateRef     = useRef<CardPhysicsState>({
+    rotX: 0, rotY: 0, rotZ: 0,
+    posX: 0, posY: 0, swingAngle: 0,
   });
 
-  const isDragging = useRef(false);
-  const dragStart = useRef({ x: 0, y: 0, rotX: 0, rotY: 0 });
-  const mouse = useMousePosition();
-  const mouseRef = useRef(mouse);
-  mouseRef.current = mouse;
+  const isDragging   = useRef(false);
+  const dragStart    = useRef({ x: 0, y: 0, angle: 0 });
 
-  const [displayRotY, setDisplayRotY] = useState(0);
+  const mouse        = useMousePosition();
+  const mouseRef     = useRef(mouse);
+  mouseRef.current   = mouse;
 
-  // Physics update — directly mutate DOM for performance
+  const [liveState, setLiveState] = useState<CardPhysicsState>({
+    rotX: 0, rotY: 0, rotZ: 0, posX: 0, posY: 0, swingAngle: 0,
+  });
+
+  // Physics update — DOM mutation for performance
   const handleUpdate = useCallback((state: CardPhysicsState) => {
-    physicsStateRef.current = state;
+    stateRef.current = state;
 
-    // Update card transform
-    if (cardWrapRef.current) {
-      cardWrapRef.current.style.transform = `
-        perspective(900px)
-        translateX(${state.posX}px)
-        translateY(${state.posY}px)
+    // Update card transform every frame
+    if (cardRef.current) {
+      const ang    = state.swingAngle;
+      const angRad = (ang * Math.PI) / 180;
+
+      // Pendulum position: card hangs from fixed top point
+      const swingOffsetX = Math.sin(angRad) * LANYARD_H * 0.55;
+      const swingOffsetY = (1 - Math.cos(angRad)) * LANYARD_H * 0.55;
+
+      cardRef.current.style.transform = `
+        perspective(1100px)
+        translateX(${swingOffsetX + state.posX}px)
+        translateY(${swingOffsetY + state.posY}px)
+        rotateZ(${ang}deg)
         rotateX(${state.rotX}deg)
         rotateY(${state.rotY}deg)
-        rotateZ(${state.rotZ}deg)
       `;
     }
 
-    // Update light overlay
-    if (lightOverlayRef.current) {
-      const lx = 50 + state.rotY * 1.2;
-      const ly = 50 - state.rotX * 1.2;
-      lightOverlayRef.current.style.background = `radial-gradient(
-        ellipse at ${lx}% ${ly}%,
-        rgba(255,255,255,0.07) 0%,
-        rgba(255,255,255,0.025) 35%,
-        transparent 70%
-      )`;
+    // Realistic shadow — moves and blurs with swing
+    if (shadowRef.current) {
+      const ang      = state.swingAngle;
+      const angRad   = (ang * Math.PI) / 180;
+      const shadowX  = Math.sin(angRad) * 50;
+      const blur     = 28 + Math.abs(ang) * 0.6;
+      const opacity  = Math.max(0.12, 0.48 - Math.abs(ang) * 0.008);
+      const scaleX   = Math.max(0.4, 1 - Math.abs(ang) * 0.012);
+
+      shadowRef.current.style.transform =
+        `translateX(calc(-50% + ${shadowX}px)) scaleX(${scaleX})`;
+      shadowRef.current.style.filter    = `blur(${blur}px)`;
+      shadowRef.current.style.opacity   = String(opacity);
     }
 
-    // Sync rotY to state for face visibility — throttled
-    setDisplayRotY(state.rotY);
+    // Update react state only for lanyard (lower frequency ok)
+    setLiveState(prev => {
+      if (
+        Math.abs(prev.swingAngle - state.swingAngle) > 0.05 ||
+        Math.abs(prev.rotX - state.rotX) > 0.1 ||
+        Math.abs(prev.rotY - state.rotY) > 0.1
+      ) {
+        return { ...state };
+      }
+      return prev;
+    });
   }, []);
 
-  const { applyImpulse, applyCommand } = useCardPhysics(handleUpdate);
+  const { applyImpulse, applyCommand, applySwing } = useCardPhysics(handleUpdate);
 
-  // Expose applyCommand for terminal
   useEffect(() => {
-    if (commandRef) {
-      commandRef.current = applyCommand;
-    }
+    if (commandRef) commandRef.current = applyCommand;
   }, [commandRef, applyCommand]);
 
-  // ── Mouse proximity effect ──
-  const proximityRaf = useRef<number>(0);
-
+  // ── Mouse proximity — subtle tilt + swing ──
+  const proxRaf = useRef<number>(0);
   useEffect(() => {
     const tick = () => {
       if (!containerRef.current || isDragging.current) {
-        proximityRaf.current = requestAnimationFrame(tick);
+        proxRaf.current = requestAnimationFrame(tick);
         return;
       }
 
       const rect = containerRef.current.getBoundingClientRect();
-      const cx = rect.left + rect.width / 2;
-      const cy = rect.top + rect.height / 2 + LANYARD_HEIGHT / 2;
-
-      const dx = mouseRef.current.x - cx;
-      const dy = mouseRef.current.y - cy;
+      const cx   = rect.left + rect.width  / 2;
+      const cy   = rect.top  + LANYARD_H   + CARD_H / 2;
+      const dx   = mouseRef.current.x - cx;
+      const dy   = mouseRef.current.y - cy;
       const dist = Math.sqrt(dx * dx + dy * dy);
-      const maxDist = 220;
+      const maxD = 300;
 
-      if (dist < maxDist && dist > 5) {
-        const proximity = 1 - dist / maxDist;
-        const speedBoost = 1 + mouseRef.current.speed * 0.6;
-        const strength = proximity * proximity * 0.03 * speedBoost;
+      if (dist < maxD && dist > 10) {
+        const prox   = (1 - dist / maxD);
+        const speed  = Math.min(mouseRef.current.speed, 4);
+        const force  = prox * prox * 0.01 * (1 + speed * 0.25);
 
+        // Gentle tilt toward cursor
         applyImpulse(
-          (dy / maxDist) * strength * 50,
-          (dx / maxDist) * strength * 50
+          (dy / maxD) * force * 25,
+          (dx / maxD) * force * 25,
         );
+
+        // Fast mouse movement creates a tiny swing
+        if (speed > 0.8) {
+          applySwing((dx / maxD) * force * 5 * speed);
+        }
       }
 
-      proximityRaf.current = requestAnimationFrame(tick);
+      proxRaf.current = requestAnimationFrame(tick);
     };
 
-    proximityRaf.current = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(proximityRaf.current);
-  }, [applyImpulse]);
+    proxRaf.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(proxRaf.current);
+  }, [applyImpulse, applySwing]);
 
-  // ── Drag handlers ──
-  const onMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      isDragging.current = true;
-      dragStart.current = {
-        x: e.clientX,
-        y: e.clientY,
-        rotX: physicsStateRef.current.rotX,
-        rotY: physicsStateRef.current.rotY,
-      };
-      e.preventDefault();
-    },
-    []
-  );
-
-  const onMouseMove = useCallback(
-    (e: React.MouseEvent) => {
-      if (!isDragging.current) return;
-      const dx = e.clientX - dragStart.current.x;
-      const dy = e.clientY - dragStart.current.y;
-      const targetRotY = dragStart.current.rotY + dx * 0.5;
-      const targetRotX = dragStart.current.rotX + dy * 0.5;
-      const cur = physicsStateRef.current;
-
-      applyImpulse(
-        (targetRotX - cur.rotX) * 0.25,
-        (targetRotY - cur.rotY) * 0.25
-      );
-    },
-    [applyImpulse]
-  );
-
-  const onMouseUp = useCallback(() => {
-    isDragging.current = false;
+  // ── Drag interaction ──
+  const onMouseDown = useCallback((e: React.MouseEvent) => {
+    isDragging.current = true;
+    dragStart.current  = {
+      x:     e.clientX,
+      y:     e.clientY,
+      angle: stateRef.current.swingAngle,
+    };
+    e.preventDefault();
   }, []);
 
-  const onTouchStart = useCallback(
-    (e: React.TouchEvent) => {
-      isDragging.current = true;
-      dragStart.current = {
-        x: e.touches[0].clientX,
-        y: e.touches[0].clientY,
-        rotX: physicsStateRef.current.rotX,
-        rotY: physicsStateRef.current.rotY,
-      };
-    },
-    []
-  );
+  const onMouseMove = useCallback((e: React.MouseEvent) => {
+    if (!isDragging.current) return;
+    const dx          = e.clientX - dragStart.current.x;
+    const dy          = e.clientY - dragStart.current.y;
+    const targetAngle = dragStart.current.angle + dx * 0.28;
+    const diff        = targetAngle - stateRef.current.swingAngle;
+    applySwing(diff * 0.18);
+    applyImpulse(dy * 0.008, dx * 0.008);
+  }, [applySwing, applyImpulse]);
 
-  const onTouchMove = useCallback(
-    (e: React.TouchEvent) => {
-      if (!isDragging.current) return;
-      const dx = e.touches[0].clientX - dragStart.current.x;
-      const dy = e.touches[0].clientY - dragStart.current.y;
-      const targetRotY = dragStart.current.rotY + dx * 0.5;
-      const targetRotX = dragStart.current.rotX + dy * 0.5;
-      const cur = physicsStateRef.current;
+  const onMouseUp   = useCallback(() => { isDragging.current = false; }, []);
 
-      applyImpulse(
-        (targetRotX - cur.rotX) * 0.25,
-        (targetRotY - cur.rotY) * 0.25
-      );
-      e.preventDefault();
-    },
-    [applyImpulse]
-  );
-
-  const onTouchEnd = useCallback(() => {
-    isDragging.current = false;
+  const onTouchStart = useCallback((e: React.TouchEvent) => {
+    isDragging.current = true;
+    dragStart.current  = {
+      x:     e.touches[0].clientX,
+      y:     e.touches[0].clientY,
+      angle: stateRef.current.swingAngle,
+    };
   }, []);
 
-  // Normalize rotY to [-180, 180] for face detection
-  const normalizedRotY = ((displayRotY % 360) + 360) % 360;
-  const showFront = normalizedRotY < 90 || normalizedRotY > 270;
+  const onTouchMove = useCallback((e: React.TouchEvent) => {
+    if (!isDragging.current) return;
+    const dx          = e.touches[0].clientX - dragStart.current.x;
+    const dy          = e.touches[0].clientY - dragStart.current.y;
+    const targetAngle = dragStart.current.angle + dx * 0.28;
+    const diff        = targetAngle - stateRef.current.swingAngle;
+    applySwing(diff * 0.18);
+    applyImpulse(dy * 0.008, dx * 0.008);
+    e.preventDefault();
+  }, [applySwing, applyImpulse]);
+
+  const onTouchEnd  = useCallback(() => { isDragging.current = false; }, []);
 
   return (
     <div
       ref={containerRef}
       style={{
-        position: "relative",
-        width: CARD_WIDTH,
-        height: CARD_HEIGHT + LANYARD_HEIGHT,
-        display: "flex",
+        position:      "relative",
+        width:         CARD_W,
+        height:        CARD_H + LANYARD_H + 40,
+        display:       "flex",
         flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "flex-end",
-        userSelect: "none",
+        alignItems:    "center",
+        userSelect:    "none",
       }}
     >
-      {/* ── Lanyard (above card, not in 3D transform) ── */}
-      <div
-        ref={lanyardRef}
-        style={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          width: "100%",
-          height: `${LANYARD_HEIGHT}px`,
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "flex-start",
-          pointerEvents: "none",
-          zIndex: 2,
-        }}
-      >
-        <Lanyard
-          cardRotY={physicsStateRef.current.rotY}
-          cardRotZ={physicsStateRef.current.rotZ}
-        />
-      </div>
+      {/* Canvas lanyard */}
+      <LanyardSystem
+        swingAngle={liveState.swingAngle}
+        rotX={liveState.rotX}
+        rotY={liveState.rotY}
+        cardWidth={CARD_W}
+        lanyardHeight={LANYARD_H + 22}
+      />
 
-      {/* ── 3D Card wrapper ── */}
+      {/* 3D Card */}
       <div
-        ref={cardWrapRef}
+        ref={cardRef}
         style={{
-          width: CARD_WIDTH,
-          height: CARD_HEIGHT,
-          position: "relative",
+          position:       "absolute",
+          top:            LANYARD_H,
+          left:           "50%",
+          marginLeft:     -CARD_W / 2,
+          width:          CARD_W,
+          height:         CARD_H,
           transformStyle: "preserve-3d",
-          borderRadius: "16px",
-          cursor: isDragging.current ? "grabbing" : "grab",
-          boxShadow: `
-            0 30px 70px rgba(0,0,0,0.85),
-            0 12px 35px rgba(0,0,0,0.6),
-            0 0 0 1px rgba(255,255,255,0.07)
-          `,
-          zIndex: 3,
+          cursor:         "grab",
+          willChange:     "transform",
         }}
         onMouseDown={onMouseDown}
         onMouseMove={onMouseMove}
@@ -249,91 +220,28 @@ export const IDCard3D: React.FC<IDCard3DProps> = ({ commandRef }) => {
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
       >
-        {/* Card thickness — top edge */}
-        <div
-          style={{
-            position: "absolute",
-            top: "-2px",
-            left: "10px",
-            right: "10px",
-            height: "4px",
-            background: "linear-gradient(90deg, #111827, #1e2740, #111827)",
-            transform: "rotateX(90deg)",
-            transformOrigin: "top center",
-          }}
-        />
-
-        {/* Card thickness — bottom edge */}
-        <div
-          style={{
-            position: "absolute",
-            bottom: "-2px",
-            left: "10px",
-            right: "10px",
-            height: "4px",
-            background: "linear-gradient(90deg, #111827, #1e2740, #111827)",
-            transform: "rotateX(-90deg)",
-            transformOrigin: "bottom center",
-          }}
-        />
-
-        {/* Front face */}
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            borderRadius: "16px",
-            backfaceVisibility: "hidden",
-            WebkitBackfaceVisibility: "hidden",
-            overflow: "hidden",
-          }}
-        >
-          <CardFront rotY={displayRotY} />
-        </div>
-
-        {/* Back face */}
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            borderRadius: "16px",
-            backfaceVisibility: "hidden",
-            WebkitBackfaceVisibility: "hidden",
-            overflow: "hidden",
-            transform: "rotateY(180deg)",
-          }}
-        >
-          <CardBack rotY={displayRotY} />
-        </div>
-
-        {/* Dynamic light reflection overlay */}
-        <div
-          ref={lightOverlayRef}
-          style={{
-            position: "absolute",
-            inset: 0,
-            borderRadius: "16px",
-            pointerEvents: "none",
-            zIndex: 10,
-            mixBlendMode: "overlay",
-            backfaceVisibility: "hidden",
-          }}
+        <RealisticCard
+          rotX={liveState.rotX}
+          rotY={liveState.rotY}
+          swingAngle={liveState.swingAngle}
         />
       </div>
 
-      {/* Ground shadow */}
+      {/* Realistic ground shadow */}
       <div
+        ref={shadowRef}
         style={{
-          position: "absolute",
-          bottom: "-24px",
-          left: "8%",
-          right: "8%",
-          height: "24px",
-          background:
-            "radial-gradient(ellipse at center, rgba(0,0,0,0.55) 0%, transparent 70%)",
-          filter: "blur(10px)",
+          position:      "absolute",
+          bottom:        "-10px",
+          left:          "50%",
+          width:         CARD_W * 0.82,
+          height:        "18px",
+          background:    "radial-gradient(ellipse at center, rgba(0,0,0,0.75) 0%, transparent 70%)",
+          filter:        "blur(28px)",
+          opacity:       0.45,
           pointerEvents: "none",
-          zIndex: 1,
+          transform:     "translateX(-50%)",
+          willChange:    "transform, filter, opacity",
         }}
       />
     </div>

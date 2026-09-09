@@ -1,337 +1,388 @@
 import React, {
-  useState,
-  useRef,
-  useEffect,
-  useCallback,
-  KeyboardEvent,
-  FormEvent,
+  useState, useRef, useEffect,
+  useCallback, KeyboardEvent, FormEvent,
 } from "react";
 import { profile } from "../../data/profile";
 
-interface TerminalLine {
-  id: number;
-  type: "prompt" | "output" | "error" | "system";
+interface Line {
+  id:   number;
+  type: "prompt" | "output" | "error" | "system" | "gap";
   text: string;
 }
 
-type CommandHandler = (p: typeof profile) => string;
+type Handler = (p: typeof profile) => string;
 
-const COMMAND_MAP: Record<string, CommandHandler> = {
-  whoami: (p) =>
-    `${p.name}\n${p.role}\n${p.education}, ${p.university}\n${p.location}`,
+const BANNER = [
+  "  ██████╗ ███████╗██╗   ██╗",
+  "  ██╔══██╗██╔════╝██║   ██║",
+  "  ██║  ██║█████╗  ██║   ██║",
+  "  ██║  ██║██╔══╝  ╚██╗ ██╔╝",
+  "  ██████╔╝███████╗ ╚████╔╝ ",
+  "  ╚═════╝ ╚══════╝  ╚═══╝  ",
+].join("\n");
 
-  help: () =>
-    [
-      "┌─ Available Commands ──────────────────┐",
-      "│  whoami   Show developer identity     │",
-      "│  info     Full profile details        │",
-      "│  about    About this developer        │",
-      "│  card     Interact with ID card       │",
-      "│  flip     Flip the ID card            │",
-      "│  links    All profile links           │",
-      "│  skills   Technical skills            │",
-      "│  contact  Contact information         │",
-      "│  clear    Clear terminal              │",
-      "│  help     Show this help              │",
-      "└───────────────────────────────────────┘",
-    ].join("\n"),
+const COMMANDS: Record<string, Handler> = {
+  whoami: (p) => [
+    `  ${p.name}`,
+    `  ${p.role}`,
+    `  ${p.education} — ${p.university}`,
+    `  📍 ${p.location}`,
+  ].join("\n"),
 
-  info: (p) =>
-    [
-      `Name       ${p.name}`,
-      `Role       ${p.role}`,
-      `Education  ${p.education}`,
-      `University ${p.university}`,
-      `Location   ${p.location}`,
-      `Dev ID     ${p.developerId}`,
-      `Serial     ${p.cardSerial}`,
-    ].join("\n"),
+  help: () => [
+    "  ┌─────────────────────────────────────────┐",
+    "  │           AVAILABLE COMMANDS            │",
+    "  ├─────────────────┬───────────────────────┤",
+    "  │  whoami         │  Show identity        │",
+    "  │  info           │  Full profile         │",
+    "  │  about          │  About me             │",
+    "  │  card           │  Shake ID card        │",
+    "  │  flip           │  Flip ID card         │",
+    "  │  links          │  All links            │",
+    "  │  skills         │  Tech stack           │",
+    "  │  contact        │  Contact info         │",
+    "  │  banner         │  ASCII art            │",
+    "  │  clear          │  Clear terminal       │",
+    "  │  help           │  This menu            │",
+    "  └─────────────────┴───────────────────────┘",
+  ].join("\n"),
 
-  about: (p) =>
-    `${p.name} is a passionate ${p.role.toLowerCase()} pursuing\n${p.education} at ${p.university}, ${p.location}.\n\nBuilding modern digital experiences with clean code,\nthoughtful design, and cutting-edge technologies.`,
+  info: (p) => [
+    `  Name       :  ${p.name}`,
+    `  Role       :  ${p.role}`,
+    `  Education  :  ${p.education}`,
+    `  University :  ${p.university}`,
+    `  Location   :  ${p.location}`,
+    `  Dev ID     :  ${p.developerId}`,
+    `  Serial     :  ${p.cardSerial}`,
+    `  Issued     :  ${p.issueDate}`,
+    `  Expires    :  ${p.expiryDate}`,
+  ].join("\n"),
 
-  card: () => `↻ Interacting with ID card...\nPhysics simulation active.`,
+  about: (p) => [
+    `  ${p.name}`,
+    `  ${"─".repeat(Math.min(p.name.length + 2, 36))}`,
+    `  A passionate ${p.role} pursuing`,
+    `  ${p.education} at`,
+    `  ${p.university}.`,
+    ``,
+    `  Building modern digital experiences`,
+    `  with clean code and thoughtful design.`,
+    ``,
+    `  Currently based in ${p.location}.`,
+  ].join("\n"),
 
-  flip: () => `↺ Flipping ID card...`,
+  banner: () => BANNER,
 
-  links: (p) =>
-    [
-      `GitHub     ${p.github}`,
-      `LinkedIn   ${p.linkedin}`,
-      `Portfolio  ${p.portfolio}`,
-      `Email      ${p.email}`,
-    ].join("\n"),
+  card:    () => "  ↻  ID card physics activated...",
+  flip:    () => "  ↺  Flipping ID card...",
 
-  skills: () =>
-    [
-      "Languages   TypeScript  JavaScript  Python  Java",
-      "Frameworks  React  Next.js  Node.js  Express",
-      "Tools       Git  Docker  VS Code  Figma  Linux",
-      "Database    PostgreSQL  MongoDB  Redis",
-      "Cloud       AWS  Vercel  Railway  Netlify",
-    ].join("\n"),
+  links: (p) => [
+    `  ╭──────────────────────────────────────────╮`,
+    `  │  github     ${p.github.padEnd(30)}│`,
+    `  │  linkedin   ${(p.linkedin.length > 30 ? p.linkedin.slice(0, 30) : p.linkedin).padEnd(30)}│`,
+    `  │  portfolio  ${p.portfolio.padEnd(30)}│`,
+    `  │  email      ${p.email.padEnd(30)}│`,
+    `  ╰──────────────────────────────────────────╯`,
+  ].join("\n"),
 
-  contact: (p) =>
-    [
-      `Email     ${p.email}`,
-      `GitHub    ${p.github}`,
-      `LinkedIn  ${p.linkedin}`,
-    ].join("\n"),
+  skills: () => [
+    `  Languages  ──  TypeScript  JavaScript  Python  Java`,
+    `  Frontend   ──  React  Next.js  Tailwind  CSS`,
+    `  Backend    ──  Node.js  Express  FastAPI`,
+    `  Database   ──  PostgreSQL  MongoDB  Redis`,
+    `  DevOps     ──  Docker  Git  AWS  Vercel  Linux`,
+    `  Tools      ──  VS Code  Figma  Postman  Vim`,
+  ].join("\n"),
+
+  contact: (p) => [
+    `  Email     :  ${p.email}`,
+    `  GitHub    :  ${p.github}`,
+    `  LinkedIn  :  ${p.linkedin}`,
+  ].join("\n"),
 
   clear: () => "__CLEAR__",
 };
 
-let lineIdCounter = 0;
-const mkLine = (type: TerminalLine["type"], text: string): TerminalLine => ({
-  id: lineIdCounter++,
-  type,
-  text,
-});
+const ALL_CMDS = Object.keys(COMMANDS);
+
+let uid = 0;
+const line = (type: Line["type"], text: string): Line =>
+  ({ id: uid++, type, text });
+
+const PROMPT_USER  = profile.name.toLowerCase().split(" ")[0];
+const PROMPT_HOST  = "portfolio";
 
 export const Terminal: React.FC<{ onCommand: (cmd: string) => void }> = ({
   onCommand,
 }) => {
-  const [lines, setLines] = useState<TerminalLine[]>([
-    mkLine("system", `Welcome to ${profile.name}'s Portfolio Terminal v2.0`),
-    mkLine("system", `Type 'help' for available commands.`),
-    mkLine("system", `Try: whoami  info  card  flip  links`),
+  const [lines, setLines] = useState<Line[]>([
+    line("system", BANNER),
+    line("gap",    ""),
+    line("system", `  Initializing portfolio system...`),
+    line("system", `  Logged in as: guest@${PROMPT_HOST}`),
+    line("gap",    ""),
+    line("output", `  Type 'help' to see all commands.`),
+    line("output", `  Try: whoami  skills  links  flip`),
+    line("gap",    ""),
   ]);
 
-  const [input, setInput] = useState("");
-  const [cmdHistory, setCmdHistory] = useState<string[]>([]);
-  const [histIdx, setHistIdx] = useState(-1);
-  const [isFocused, setIsFocused] = useState(false);
+  const [input,      setInput]      = useState("");
+  const [history,    setHistory]    = useState<string[]>([]);
+  const [histIdx,    setHistIdx]    = useState(-1);
+  const [blink,      setBlink]      = useState(true);
 
   const bottomRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef  = useRef<HTMLInputElement>(null);
+
+  // Cursor blink
+  useEffect(() => {
+    const t = setInterval(() => setBlink(b => !b), 520);
+    return () => clearInterval(t);
+  }, []);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [lines]);
 
-  const handleSubmit = useCallback(
-    (e: FormEvent) => {
-      e.preventDefault();
-      const cmd = input.trim().toLowerCase();
-      if (!cmd) return;
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
 
-      const handler = COMMAND_MAP[cmd];
+  const submit = useCallback((e: FormEvent) => {
+    e.preventDefault();
+    const cmd = input.trim().toLowerCase();
+    if (!cmd) return;
 
-      if (!handler) {
-        setLines((prev) => [
-          ...prev,
-          mkLine("prompt", `user@portfolio:~$ ${cmd}`),
-          mkLine(
-            "error",
-            `bash: ${cmd}: command not found\nType 'help' for available commands.`
-          ),
+    const handler = COMMANDS[cmd];
+    if (!handler) {
+      setLines(prev => [
+        ...prev,
+        line("prompt", cmd),
+        line("error",  `  bash: ${cmd}: command not found`),
+        line("error",  `  Type 'help' for available commands.`),
+        line("gap",    ""),
+      ]);
+    } else {
+      const out = handler(profile);
+      if (out === "__CLEAR__") {
+        setLines([
+          line("system", "  Terminal cleared."),
+          line("gap",    ""),
         ]);
       } else {
-        const result = handler(profile);
-
-        if (result === "__CLEAR__") {
-          setLines([mkLine("system", "Terminal cleared.")]);
-        } else {
-          setLines((prev) => [
-            ...prev,
-            mkLine("prompt", `user@portfolio:~$ ${cmd}`),
-            mkLine("output", result),
-          ]);
-        }
-        onCommand(cmd);
+        setLines(prev => [
+          ...prev,
+          line("prompt", cmd),
+          line("output", out),
+          line("gap",    ""),
+        ]);
       }
+      onCommand(cmd);
+    }
 
-      setCmdHistory((prev) => [cmd, ...prev.slice(0, 49)]);
-      setHistIdx(-1);
-      setInput("");
-    },
-    [input, onCommand]
-  );
+    setHistory(h => [cmd, ...h.slice(0, 99)]);
+    setHistIdx(-1);
+    setInput("");
+  }, [input, onCommand]);
 
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent<HTMLInputElement>) => {
-      if (e.key === "ArrowUp") {
-        e.preventDefault();
-        const next = Math.min(histIdx + 1, cmdHistory.length - 1);
-        setHistIdx(next);
-        setInput(cmdHistory[next] ?? "");
-      } else if (e.key === "ArrowDown") {
-        e.preventDefault();
-        const next = Math.max(histIdx - 1, -1);
-        setHistIdx(next);
-        setInput(next === -1 ? "" : (cmdHistory[next] ?? ""));
-      }
-    },
-    [histIdx, cmdHistory]
-  );
+  const onKey = useCallback((e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      const i = Math.min(histIdx + 1, history.length - 1);
+      setHistIdx(i);
+      setInput(history[i] ?? "");
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      const i = Math.max(histIdx - 1, -1);
+      setHistIdx(i);
+      setInput(i === -1 ? "" : (history[i] ?? ""));
+    } else if (e.key === "Tab") {
+      e.preventDefault();
+      const match = ALL_CMDS.find(c => c.startsWith(input.toLowerCase()));
+      if (match) setInput(match);
+    }
+  }, [histIdx, history, input]);
 
-  const lineColor = (type: TerminalLine["type"]) => {
-    switch (type) {
-      case "prompt":
-        return "#00d4ff";
-      case "output":
-        return "rgba(255,255,255,0.78)";
-      case "error":
-        return "#ff6b6b";
-      case "system":
-        return "rgba(0,212,255,0.45)";
+  // Colour per line type
+  const colour = (t: Line["type"]) => {
+    switch (t) {
+      case "output": return "#c9d1d9";
+      case "error":  return "#f85149";
+      case "system": return "#6e7681";
+      default:       return "#c9d1d9";
     }
   };
 
   return (
     <div
       style={{
-        width: "100%",
-        background: "rgba(8,10,20,0.97)",
-        border: `1px solid ${isFocused ? "rgba(0,212,255,0.35)" : "rgba(0,212,255,0.15)"}`,
-        borderRadius: "12px",
-        overflow: "hidden",
-        fontFamily: "'Courier New', 'Lucida Console', monospace",
-        boxShadow: isFocused
-          ? "0 20px 60px rgba(0,0,0,0.8), 0 0 30px rgba(0,212,255,0.06)"
-          : "0 20px 60px rgba(0,0,0,0.7)",
-        transition: "border-color 0.2s, box-shadow 0.2s",
-        backdropFilter: "blur(12px)",
+        width:         "100%",
+        height:        "100%",
+        display:       "flex",
+        flexDirection: "column",
+        background:    "#0d1117",
+        fontFamily:    "'JetBrains Mono','Fira Code','Cascadia Code','Courier New',monospace",
+        overflow:      "hidden",
       }}
       onClick={() => inputRef.current?.focus()}
     >
-      {/* Title bar */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "6px",
-          padding: "10px 14px",
-          background: "rgba(255,255,255,0.025)",
-          borderBottom: "1px solid rgba(255,255,255,0.05)",
-        }}
-      >
-        <div
-          style={{
-            width: "10px",
-            height: "10px",
-            borderRadius: "50%",
-            background: "#ff5f57",
-          }}
-        />
-        <div
-          style={{
-            width: "10px",
-            height: "10px",
-            borderRadius: "50%",
-            background: "#ffbd2e",
-          }}
-        />
-        <div
-          style={{
-            width: "10px",
-            height: "10px",
-            borderRadius: "50%",
-            background: "#28c940",
-          }}
-        />
-        <div
-          style={{
-            flex: 1,
-            textAlign: "center",
-            fontSize: "10px",
-            color: "rgba(255,255,255,0.25)",
-            letterSpacing: "1px",
-          }}
-        >
-          portfolio@terminal — bash — 80×24
+      {/* ── Title bar ── */}
+      <div style={{
+        display:       "flex",
+        alignItems:    "center",
+        padding:       "9px 14px",
+        background:    "#161b22",
+        borderBottom:  "1px solid #21262d",
+        flexShrink:    0,
+        gap:           "10px",
+      }}>
+        {/* Traffic lights */}
+        <div style={{ display: "flex", gap: "6px" }}>
+          {["#ff5f57","#ffbd2e","#28c940"].map((c, i) => (
+            <div key={i} style={{
+              width: 11, height: 11, borderRadius: "50%",
+              background: c,
+              boxShadow:  `0 0 0 0.5px rgba(0,0,0,0.4)`,
+            }} />
+          ))}
+        </div>
+
+        {/* Centre tab */}
+        <div style={{ flex: 1, display: "flex", justifyContent: "center" }}>
+          <div style={{
+            fontSize:     "11px",
+            color:        "#8b949e",
+            letterSpacing:"0.2px",
+          }}>
+            {PROMPT_USER}@{PROMPT_HOST}: ~
+          </div>
+        </div>
+
+        <div style={{
+          fontSize: "9px", color: "#3d444d", letterSpacing: "0.8px",
+        }}>
+          bash
         </div>
       </div>
 
-      {/* Output area */}
-      <div
-        style={{
-          height: "300px",
-          overflowY: "auto",
-          padding: "14px 16px",
-          scrollbarWidth: "thin",
-          scrollbarColor: "rgba(0,212,255,0.15) transparent",
-        }}
-      >
-        {lines.map((line) => (
-          <pre
-            key={line.id}
-            style={{
-              margin: "0 0 3px 0",
-              padding: 0,
-              fontSize: "11px",
-              lineHeight: "1.65",
-              color: lineColor(line.type),
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-word",
-              fontFamily: "inherit",
-              letterSpacing: "0.2px",
-            }}
-          >
-            {line.type === "system" ? `# ${line.text}` : line.text}
-          </pre>
-        ))}
+      {/* ── Output scroll area ── */}
+      <div style={{
+        flex:          1,
+        overflowY:     "auto",
+        padding:       "14px 0 6px",
+        scrollbarWidth:"thin",
+        scrollbarColor:"#21262d transparent",
+      }}>
+        {lines.map(l => {
+          if (l.type === "gap") return <div key={l.id} style={{ height: "5px" }} />;
+
+          if (l.type === "prompt") return (
+            <div key={l.id} style={{
+              display:    "flex",
+              alignItems: "center",
+              padding:    "1px 0",
+              lineHeight: "1.5",
+            }}>
+              <span style={{ color: "#3fb950", fontSize: "12px", paddingLeft: "14px", flexShrink: 0 }}>
+                {PROMPT_USER}
+              </span>
+              <span style={{ color: "#6e7681", fontSize: "12px" }}>@</span>
+              <span style={{ color: "#58a6ff", fontSize: "12px" }}>{PROMPT_HOST}</span>
+              <span style={{ color: "#6e7681", fontSize: "12px" }}>:~$&nbsp;</span>
+              <span style={{ color: "#e6edf3", fontSize: "12px" }}>{l.text}</span>
+            </div>
+          );
+
+          return (
+            <pre key={l.id} style={{
+              margin:      0,
+              padding:     "0.5px 14px",
+              fontSize:    "12px",
+              lineHeight:  "1.6",
+              color:       colour(l.type),
+              whiteSpace:  "pre",
+              fontFamily:  "inherit",
+              overflowX:   "auto",
+            }}>
+              {l.text}
+            </pre>
+          );
+        })}
+
+        {/* Live prompt line */}
+        <div style={{
+          display:    "flex",
+          alignItems: "center",
+          padding:    "1px 0",
+          lineHeight: "1.5",
+        }}>
+          <span style={{ color: "#3fb950", fontSize: "12px", paddingLeft: "14px", flexShrink: 0 }}>
+            {PROMPT_USER}
+          </span>
+          <span style={{ color: "#6e7681", fontSize: "12px" }}>@</span>
+          <span style={{ color: "#58a6ff", fontSize: "12px" }}>{PROMPT_HOST}</span>
+          <span style={{ color: "#6e7681", fontSize: "12px" }}>:~$&nbsp;</span>
+          <span style={{ color: "#e6edf3", fontSize: "12px" }}>{input}</span>
+          <span style={{
+            display:         "inline-block",
+            width:           "7px",
+            height:          "15px",
+            background:      blink ? "#e6edf3" : "transparent",
+            verticalAlign:   "middle",
+            marginLeft:      "1px",
+          }} />
+        </div>
+
         <div ref={bottomRef} />
       </div>
 
-      {/* Input row */}
+      {/* Hidden real input */}
       <form
-        onSubmit={handleSubmit}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          padding: "10px 16px",
-          borderTop: "1px solid rgba(255,255,255,0.05)",
-          gap: "8px",
-          background: "rgba(0,0,0,0.2)",
-        }}
+        onSubmit={submit}
+        style={{ position: "absolute", opacity: 0, pointerEvents: "none", bottom: 30 }}
       >
-        <span
-          style={{
-            color: "#00d4ff",
-            fontSize: "11px",
-            flexShrink: 0,
-            letterSpacing: "0.3px",
-          }}
-        >
-          user@portfolio:~$
-        </span>
         <input
           ref={inputRef}
           value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          onFocus={() => setIsFocused(true)}
-          onBlur={() => setIsFocused(false)}
-          autoFocus
-          spellCheck={false}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={onKey}
           autoComplete="off"
           autoCapitalize="off"
-          style={{
-            flex: 1,
-            background: "transparent",
-            border: "none",
-            outline: "none",
-            color: "#ffffff",
-            fontSize: "11px",
-            fontFamily: "inherit",
-            caretColor: "#00d4ff",
-            letterSpacing: "0.3px",
-          }}
+          spellCheck={false}
+          style={{ position: "absolute", opacity: 0, width: 1 }}
         />
-        {isFocused && (
-          <span
-            style={{
-              display: "inline-block",
-              width: "7px",
-              height: "13px",
-              background: "#00d4ff",
-              opacity: 0.85,
-              animation: "blink 1s step-end infinite",
-            }}
-          />
-        )}
       </form>
+
+      {/* ── Status bar ── */}
+      <div style={{
+        display:        "flex",
+        alignItems:     "center",
+        justifyContent: "space-between",
+        padding:        "5px 14px",
+        background:     "#161b22",
+        borderTop:      "1px solid #21262d",
+        flexShrink:     0,
+      }}>
+        <div style={{ display: "flex", gap: "14px" }}>
+          <Stat dot="#3fb950" label="READY" />
+          <Stat dot="#58a6ff" label={profile.role.toUpperCase()} />
+        </div>
+        <div style={{ display: "flex", gap: "14px" }}>
+          <Stat dot="#3d444d" label="UTF-8" />
+          <Stat dot="#3d444d" label="bash" />
+          <Stat dot="#3d444d" label={profile.location} />
+        </div>
+      </div>
     </div>
   );
 };
+
+const Stat: React.FC<{ dot: string; label: string }> = ({ dot, label }) => (
+  <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>
+    <div style={{ width: 6, height: 6, borderRadius: "50%", background: dot }} />
+    <span style={{ fontSize: "9px", color: "#3d444d", letterSpacing: "0.6px" }}>
+      {label}
+    </span>
+  </div>
+);
